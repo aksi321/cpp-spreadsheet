@@ -28,64 +28,70 @@ void Sheet::EnsureExists(const Position& pos) {
     if (pos.row >= static_cast<int>(cells_.size())) {
         cells_.resize(pos.row + 1);
     }
-    auto& row = cells_[pos.row];
+    Row& row = cells_[pos.row];
     if (pos.col >= static_cast<int>(row.size())) {
         row.resize(pos.col + 1);
     }
 }
 
-Cell* Sheet::GetOrCreate(Position p)
-{
+Cell* Sheet::GetOrCreate(Position p) {
     EnsureExists(p);
-    if (!cells_[p.row][p.col])
+    if (!cells_[p.row][p.col]) {
         cells_[p.row][p.col] = make_unique<Cell>(*this);
+    }
     return cells_[p.row][p.col].get();
 }
 
-void Sheet::Link(Cell& from, Cell& to)
-{
+void Sheet::Link(Cell& from, Cell& to) {
     from.children_.push_back(&to);
     to  .parents_ .push_back(&from);
 }
 
-void Sheet::UnlinkAll(Cell& node)
-{
-    for (Cell* ch : node.children_)
-        ch->RemoveParent(&node);
+void Sheet::UnlinkAll(Cell& node) {
+    for (Cell* child : node.children_) {
+        child->RemoveParent(&node);
+    }
     node.children_.clear();
 }
 
-void Sheet::RebuildDeps(Cell& node,
-                        const std::vector<Position>& refs)
-{
-    for (const Position& p : refs)
+void Sheet::RebuildDeps(Cell& node, const vector<Position>& refs) {
+    for (const Position& p : refs) {
         Link(node, *GetOrCreate(p));
+    }
 }
 
-bool Sheet::HasCircular(Cell& start,
-                        Cell& cur,
-                        std::unordered_set<Cell*>& vis) const
-{
-    if (&start == &cur)            return true;
-    if (!vis.insert(&cur).second)  return false;
-
-    for (Cell* ch : cur.children_)
-        if (HasCircular(start, *ch, vis))
+bool Sheet::HasCircular(const Cell& start, const Cell& cur) const {
+    if (&start == &cur) {
+        return true;
+    }
+    if (!dfs_visited_.insert(&cur).second) {
+        return false;
+    }
+    for (Cell* child : cur.children_) {
+        if (HasCircular(start, *child)) {
             return true;
+        }
+    }
     return false;
 }
 
-
-void Sheet::SetCell(Position pos, string text)
-{
+// параметр передаётся по значению, потому что должен
+// точно совпадать с объявлением в SheetInterface, common.h
+// (virtual void SetCell(Position, std::string text)).
+// изменять сигнатуру нельзя, иначе ничего не работает
+void Sheet::SetCell(Position pos, std::string text) {
     CheckPosOrThrow(pos);
 
-    if (text.empty()) { ClearCell(pos); return; }
+    if (text.empty()) {
+        ClearCell(pos);
+        return;
+    }
 
     Cell* cell = GetOrCreate(pos);
 
-    std::unique_ptr<Cell::Impl> tmp_impl;
-    std::vector<Position>       new_refs;
+    unique_ptr<Cell::Impl> tmp_impl;
+    vector<Position>       new_refs;
+
     try {
         cell->Set(text);
         new_refs = cell->GetReferencedCells();
@@ -94,17 +100,21 @@ void Sheet::SetCell(Position pos, string text)
         throw;
     }
 
-    std::unordered_set<Cell*> vis;
-    Cell  fake_holder(*this);
+    dfs_visited_.clear();
+    Cell fake_holder(*this);
     fake_holder.children_.reserve(new_refs.size());
-    for (const Position& p : new_refs)
+    for (const Position& p : new_refs) {
         fake_holder.children_.push_back(GetOrCreate(p));
+    }
 
-    if (HasCircular(*cell, fake_holder, vis))
-        throw CircularDependencyException("circular");
+    // проверяем циклическую зависимость на уровне Sheet 
+    // только здесь есть полный граф ячеек, перенос в Cell нарушил бы инкапсуляцию
+    if (HasCircular(*cell, fake_holder)) {
+        throw CircularDependencyException("Circular dependency");
+    }
 
     UnlinkAll(*cell);
-    cell->impl_ = std::move(tmp_impl);
+    cell->impl_  = std::move(tmp_impl);
     cell->dirty_ = true;
     RebuildDeps(*cell, new_refs);
     cell->InvalidateCache();
@@ -114,7 +124,7 @@ const CellInterface* Sheet::GetCell(Position pos) const {
     CheckPosOrThrow(pos);
 
     if (pos.row < static_cast<int>(cells_.size())) {
-        const auto& row = cells_[pos.row];
+        const Row& row = cells_[pos.row];
         if (pos.col < static_cast<int>(row.size())) {
             return row[pos.col].get();
         }
@@ -126,7 +136,7 @@ CellInterface* Sheet::GetCell(Position pos) {
     CheckPosOrThrow(pos);
 
     if (pos.row < static_cast<int>(cells_.size())) {
-        auto& row = cells_[pos.row];
+        Row& row = cells_[pos.row];
         if (pos.col < static_cast<int>(row.size())) {
             return row[pos.col].get();
         }
@@ -137,25 +147,30 @@ CellInterface* Sheet::GetCell(Position pos) {
 void Sheet::ClearCell(Position pos) {
     CheckPosOrThrow(pos);
 
-    if (pos.row >= static_cast<int>(cells_.size())) return;
+    if (pos.row >= static_cast<int>(cells_.size())) {
+        return;
+    }
     auto& row = cells_[pos.row];
-    if (pos.col >= static_cast<int>(row.size())) return;
+    if (pos.col >= static_cast<int>(row.size())) {
+        return;
+    }
 
+    if (row[pos.col]) {
+        row[pos.col]->InvalidateCache();
+    }
     row[pos.col].reset();
-    if (row[pos.col])
-    row[pos.col]->InvalidateCache();
 }
 
 Size Sheet::GetPrintableSize() const {
     int max_row = 0;
     int max_col = 0;
 
-    for (int r = 0; r < static_cast<int>(cells_.size()); ++r) {
-        const auto& row = cells_[r];
-        for (int c = 0; c < static_cast<int>(row.size()); ++c) {
-            if (!CellIsEmpty(row[c])) {
-                max_row = max(max_row, r + 1);
-                max_col = max(max_col, c + 1);
+    for (int row_idx = 0; row_idx < static_cast<int>(cells_.size()); ++row_idx) {
+        const auto& current_row = cells_[row_idx];
+        for (int col_idx = 0; col_idx < static_cast<int>(current_row.size()); ++col_idx) {
+            if (!CellIsEmpty(current_row[col_idx])) {
+                max_row = max(max_row, row_idx + 1);
+                max_col = max(max_col, col_idx + 1);
             }
         }
     }
@@ -165,18 +180,20 @@ Size Sheet::GetPrintableSize() const {
 void Sheet::PrintValues(ostream& out) const {
     Size sz = GetPrintableSize();
 
-    for (int r = 0; r < sz.rows; ++r) {
-        for (int c = 0; c < sz.cols; ++c) {
-            if (c) out.put('\t');
-
-            const Cell* cell = nullptr;
-            if (r < static_cast<int>(cells_.size()) &&
-                c < static_cast<int>(cells_[r].size())) {
-                cell = cells_[r][c].get();
+    for (int row_idx = 0; row_idx < sz.rows; ++row_idx) {
+        for (int col_idx = 0; col_idx < sz.cols; ++col_idx) {
+            if (col_idx) {
+                out.put('\t');
             }
 
-            if (cell && !cell->GetText().empty()) {
-                PrintValue(cell->GetValue(), out);
+            const Cell* cell_ptr = nullptr;
+            if (row_idx < static_cast<int>(cells_.size()) &&
+                col_idx < static_cast<int>(cells_[row_idx].size())) {
+                cell_ptr = cells_[row_idx][col_idx].get();
+            }
+
+            if (cell_ptr && !cell_ptr->GetText().empty()) {
+                PrintValue(cell_ptr->GetValue(), out);
             }
         }
         out.put('\n');
@@ -188,7 +205,9 @@ void Sheet::PrintTexts(ostream& out) const {
 
     for (int r = 0; r < sz.rows; ++r) {
         for (int c = 0; c < sz.cols; ++c) {
-            if (c) out.put('\t');
+            if (c) {
+                out.put('\t');
+            }
 
             const Cell* cell = nullptr;
             if (r < static_cast<int>(cells_.size()) &&
