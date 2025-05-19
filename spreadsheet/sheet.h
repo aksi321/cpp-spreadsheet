@@ -34,8 +34,7 @@ private:
     void        UnlinkAll(Cell& node);
     void        RebuildDeps(Cell& node,
                             const std::vector<Position>& refs);
-    bool        HasCircular(Cell& start,
-                           Cell& cur,
-                           std::unordered_set<Cell*>& visited) const;
+    mutable std::unordered_set<const Cell*> dfs_visited_;
+    bool        HasCircular(const Cell& start, const Cell& cur) const;
 
 };
