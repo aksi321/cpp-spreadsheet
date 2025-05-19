@@ -47,22 +47,23 @@ class Cell::FormulaImpl final : public Cell::Impl {
 public:
     FormulaImpl(string raw, Sheet& sheet) {
         size_t p = 1;
-        while (p < raw.size() &&
-               isspace(static_cast<unsigned char>(raw[p]))) ++p;
-
+        while (p < raw.size() && isspace(static_cast<unsigned char>(raw[p]))) {
+            ++p;
+        }
         formula_ = ParseFormula(raw.substr(p));
         text_    = FORMULA_SIGN + formula_->GetExpression();
         refs_    = formula_->GetReferencedCells();
     }
 
     Value GetValue(const SheetInterface& sheet) const override {
-        auto raw = formula_->Evaluate(sheet);
-        if (auto num = std::get_if<double>(&raw))
+        auto v = formula_->Evaluate(sheet);
+        if (auto num = std::get_if<double>(&v)) {
             return Value(*num);
-        return Value(std::get<FormulaError>(raw));
+        }
+        return Value(std::get<FormulaError>(v));
     }
-    string GetText() const override { return text_; }
 
+    string GetText() const override { return text_; }
     vector<Position> GetRefs() const override { return refs_; }
 
 private:
@@ -77,6 +78,8 @@ Cell::Cell(Sheet& sheet)
 
 Cell::~Cell() = default;
 
+// Проверку на циклическую зависимость выполняет Sheet::SetCell().
+// Здесь формируем кандидата и собираем ссылки на дочерние ячейки.
 void Cell::Set(string text) {
     unique_ptr<Impl> new_impl;
 
@@ -93,11 +96,14 @@ void Cell::Set(string text) {
 }
 
 void Cell::Clear() {
-    AdoptImpl(make_unique<EmptyImpl>(), {});
+    // Используем публичный интерфейс Set — так гарантируем одинаковый путь.
+    Set("");
 }
 
 CellInterface::Value Cell::GetValue() const {
-    if (!dirty_) return *cache_;
+    if (!dirty_) {
+        return *cache_;
+    }
     cache_ = impl_->GetValue(sheet_);
     dirty_ = false;
     return *cache_;
@@ -116,15 +122,22 @@ void Cell::RemoveParent(Cell* p) {
 }
 
 void Cell::InvalidateCache() {
-    if (dirty_) return;
+    if (dirty_) {
+        return;
+    }
     dirty_ = true;
-    for (Cell* parent : parents_) parent->InvalidateCache();
+    for (Cell* parent : parents_) {
+        parent->InvalidateCache();
+    }
 }
 
 void Cell::AdoptImpl(unique_ptr<Impl> new_impl,
                      const vector<Position>& refs) {
 
-    for (Cell* child : children_) child->RemoveParent(this);
+    for (Cell* child : children_) {
+        child->RemoveParent(this);
+    }
+    
     children_.clear();
 
     for (const Position& pos : refs) {
