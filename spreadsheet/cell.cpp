@@ -25,8 +25,12 @@ bool StartsWithEscape(const string& text) {
 
 class Cell::EmptyImpl final : public Cell::Impl {
 public:
-    Value  GetValue(const SheetInterface&) const override { return string{}; }
-    string GetText ()                             const override { return string{}; }
+    Value GetValue(const SheetInterface&) const override {
+         return string{};
+    }
+    string GetText() const override {
+     return string{};
+    }
 };
 
 class Cell::TextImpl final : public Cell::Impl {
@@ -35,8 +39,12 @@ public:
         : raw_(std::move(text))
         , visible_(StartsWithEscape(raw_) ? raw_.substr(1) : raw_) {}
 
-    Value  GetValue(const SheetInterface&) const override { return visible_; }
-    string GetText ()                             const override { return raw_; }
+    Value GetValue(const SheetInterface&) const override {
+        return visible_;
+    }
+    string GetText() const override {
+        return raw_;
+    }
 
 private:
     string raw_;
@@ -63,13 +71,17 @@ public:
         return Value(std::get<FormulaError>(v));
     }
 
-    string GetText() const override { return text_; }
-    vector<Position> GetRefs() const override { return refs_; }
+    string GetText() const override {
+        return text_;
+    }
+    vector<Position> GetRefs() const override { 
+        return refs_; 
+    }
 
 private:
     unique_ptr<FormulaInterface> formula_;
-    string                       text_;
-    vector<Position>             refs_;
+    string text_;
+    vector<Position> refs_;
 };
 
 Cell::Cell(Sheet& sheet)
@@ -78,8 +90,6 @@ Cell::Cell(Sheet& sheet)
 
 Cell::~Cell() = default;
 
-// Проверку на циклическую зависимость выполняет Sheet::SetCell().
-// Здесь формируем кандидата и собираем ссылки на дочерние ячейки.
 void Cell::Set(string text) {
     unique_ptr<Impl> new_impl;
 
@@ -92,11 +102,22 @@ void Cell::Set(string text) {
     }
 
     vector<Position> refs = new_impl->GetRefs();
-    AdoptImpl(std::move(new_impl), refs);
+
+    sheet_.dfs_visited_.clear(); 
+    Cell fake_holder(sheet_);
+    fake_holder.children_.reserve(refs.size());
+    for (const Position& p : refs) {
+        fake_holder.children_.push_back(sheet_.GetOrCreate(p));
+    }
+    if (sheet_.HasCircular(*this, fake_holder)) {
+        throw CircularDependencyException("Circular dependency");
+    }
+
+AdoptImpl(std::move(new_impl), refs);
+
 }
 
 void Cell::Clear() {
-    // Используем публичный интерфейс Set — так гарантируем одинаковый путь.
     Set("");
 }
 
