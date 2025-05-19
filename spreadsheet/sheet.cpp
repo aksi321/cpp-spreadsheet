@@ -75,10 +75,6 @@ bool Sheet::HasCircular(const Cell& start, const Cell& cur) const {
     return false;
 }
 
-// параметр передаётся по значению, потому что должен
-// точно совпадать с объявлением в SheetInterface, common.h
-// (virtual void SetCell(Position, std::string text)).
-// изменять сигнатуру нельзя, иначе ничего не работает
 void Sheet::SetCell(Position pos, std::string text) {
     CheckPosOrThrow(pos);
 
@@ -87,37 +83,7 @@ void Sheet::SetCell(Position pos, std::string text) {
         return;
     }
 
-    Cell* cell = GetOrCreate(pos);
-
-    unique_ptr<Cell::Impl> tmp_impl;
-    vector<Position>       new_refs;
-
-    try {
-        cell->Set(text);
-        new_refs = cell->GetReferencedCells();
-        tmp_impl = std::move(cell->impl_);
-    } catch (const FormulaException&) {
-        throw;
-    }
-
-    dfs_visited_.clear();
-    Cell fake_holder(*this);
-    fake_holder.children_.reserve(new_refs.size());
-    for (const Position& p : new_refs) {
-        fake_holder.children_.push_back(GetOrCreate(p));
-    }
-
-    // проверяем циклическую зависимость на уровне Sheet 
-    // только здесь есть полный граф ячеек, перенос в Cell нарушил бы инкапсуляцию
-    if (HasCircular(*cell, fake_holder)) {
-        throw CircularDependencyException("Circular dependency");
-    }
-
-    UnlinkAll(*cell);
-    cell->impl_  = std::move(tmp_impl);
-    cell->dirty_ = true;
-    RebuildDeps(*cell, new_refs);
-    cell->InvalidateCache();
+    GetOrCreate(pos)->Set(std::move(text));
 }
 
 const CellInterface* Sheet::GetCell(Position pos) const {
